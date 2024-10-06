@@ -28,15 +28,42 @@ class Normalize(nn.Module):
 
 
 def pgd(model, x_batch, target, k, eps, eps_step):
-    # TODO: Problem 4.1 and 4.2 - implement PGD attack  
-    raise NotImplementedError
+    """Batch-wise implementation of the PGD attack
+    
+    :param model: the model to attack
+    :param x_batch: the input batch
+    :param target: the target labels
+    :param k: the number of steps
+    :param eps: the epsilon value
+    :param eps_step: the epsilon in one step
+    :return: the adversarial examples
+    """
+    loss_fn = torch.nn.CrossEntropyLoss(reduction='sum')
+
+    x_adv = x_batch + eps * (2*torch.rand_like(x_batch) - 1)
+    x_adv.clamp_(min=0., max=1.)
+    
+    for _ in range(k):
+        x_adv.detach_().requires_grad_(True)
+        model.zero_grad()
+        out = model(x_adv)
+        loss = loss_fn(out, target)
+        loss.backward()
+    
+    
+        nu = eps_step * torch.sign(x_adv)
+        x_adv = x_adv + nu
+
+        x_adv.clamp_(min=0, max=1)
+
+    return x_adv.detach()
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size', type=int, default=512, help='batch size')
 parser.add_argument('--seed', type=int, default='42', help='seed')
 parser.add_argument('--learning_rate', type=float, default=0.01, help='learning rate')
-parser.add_argument('--defense', type=str, choices=['none', 'PGD', 'TRADES'], default='none', help='defense')
+parser.add_argument('--defense', type=str, choices=['none', 'PGD', 'TRADES'], default='TRADES', help='defense')
 parser.add_argument('--num_epochs', type=int, default=10, help='epochs')
 parser.add_argument('--eps', type=float, default=0.1, help='pgd epsilon')
 parser.add_argument('-k', type=int, default=7, help='pgd steps')
@@ -75,13 +102,29 @@ for epoch in range(1, args.num_epochs + 1):
 
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         if args.defense == 'PGD':
-            # TODO: Problem 4.1 implement PGD training
-            raise NotImplementedError
+            model.eval()
+            x_adv = pgd(model, x_batch, y_batch, args.k, args.eps, 2.5 * args.eps / args.k)
+            model.train() 
+            out_pgd = model(x_adv)
+
+            loss = ce_loss(out_pgd, y_batch)
 
 
         elif args.defense == 'TRADES':
-            # TODO: Problem 4.2 implement TRADES training
-            raise NotImplementedError
+            model.train()
+            out_nat = model(x_batch)
+            target = F.softmax(out_nat.detach(), dim=1)
+
+    
+            model.eval() 
+            x_adv = pgd(model, x_batch, target, args.k, args.eps, 2.5 * args.eps / args.k)
+
+            model.train()
+            out_adv = model(x_adv)
+            loss_nat = ce_loss(out_nat, y_batch)
+            loss_adv = ce_loss(out_adv, target)
+
+            loss = loss_nat + args.trades_fact * loss_adv
 
 
         elif args.defense == 'none':
@@ -104,8 +147,10 @@ for epoch in range(1, args.num_epochs + 1):
         pred = torch.max(out, dim=1)[1]
         acc = pred.eq(y_batch).sum().item()
 
-        # TODO: Problem 4.1 and 4.2 - calculate accuracy under PGD attack
-        
+        adv = pgd(model, x_batch, y_batch, args.k, args.eps, 2.5 * args.eps / args.k)
+        out_adv = model(adv)
+        pred_adv = torch.max(out_adv, dim=1)[1]
+        acc_adv = pred_adv.eq(y_batch).sum().item()
 
         # Accumulate accuracies
         tot_acc += acc
