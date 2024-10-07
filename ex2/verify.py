@@ -47,23 +47,61 @@ class AbstractBox:
 
     @staticmethod
     def construct_initial_box(x: torch.Tensor, eps: float) -> 'AbstractBox':
-        raise NotImplementedError
+        lb = x - eps
+        ub = x + eps
+
+        lb.clamp_(min=0, max=1)
+        ub.clamp_(min=0, max=1)
+
+        return AbstractBox(lb, ub)
 
     def propagate_normalize(self, normalize: Normalize) -> 'AbstractBox':
-        raise NotImplementedError
+        lb = normalize(self.lb)
+        ub = normalize(self.ub)
+
+        return AbstractBox(lb, ub)
         
 
     def propagate_view(self, view: View) -> 'AbstractBox':
-        raise NotImplementedError
+        lb = view(self.lb)
+        ub = view(self.ub)
+
+        return AbstractBox(lb, ub)
+
 
     def propagate_linear(self, fc: nn.Linear) -> 'AbstractBox':
-        raise NotImplementedError
+        w = fc.weight
+        b = fc.bias
+        
+        lb = self.lb.repeat(w.shape[0], 1) 
+        ub = self.ub.repeat(w.shape[0], 1)
+        
+        m_lb = torch.where(w > 0, lb, ub)
+        m_ub = torch.where(w > 0, ub, lb)
+
+        lb = (m_lb * w).sum(dim=1) + b
+        ub = (m_ub * w).sum(dim=1) + b
+
+        return AbstractBox(lb, ub)
 
     def propagate_relu(self, relu: nn.ReLU) -> 'AbstractBox':
-        raise NotImplementedError
+        lb = relu(self.lb)
+        ub = relu(self.ub)
+
+        return AbstractBox(lb, ub)
 
     def check_postcondition(self, y) -> bool:
-        raise NotImplementedError
+        target = y.item()
+
+        lb =self.lb[target].item()
+
+        for i in range(len(self.lb)):
+            if i != target:
+                ub = self.ub[i].item()
+                if lb <= ub:
+                    return False
+            
+        return True
 
 
 def certify_sample(model, x, y, eps) -> bool:
